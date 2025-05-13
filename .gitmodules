@@ -1,0 +1,4 @@
+[submodule "submodules/sonic"]
+	path = submodules/sonic
+	url = https://github.com/waywardgeek/sonic.git
+	branch = master
