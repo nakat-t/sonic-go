@@ -11,6 +11,21 @@ import (
 	"unsafe"
 )
 
+const (
+	MIN_VOLUME        = float32(C.SONIC_MIN_VOLUME)
+	MAX_VOLUME        = float32(C.SONIC_MAX_VOLUME)
+	MIN_SPEED         = float32(C.SONIC_MIN_SPEED)
+	MAX_SPEED         = float32(C.SONIC_MAX_SPEED)
+	MIN_PITCH_SETTING = float32(C.SONIC_MIN_PITCH_SETTING)
+	MAX_PITCH_SETTING = float32(C.SONIC_MAX_PITCH_SETTING)
+	MIN_RATE          = float32(C.SONIC_MIN_RATE)
+	MAX_RATE          = float32(C.SONIC_MAX_RATE)
+	MIN_SAMPLE_RATE   = int(C.SONIC_MIN_SAMPLE_RATE)
+	MAX_SAMPLE_RATE   = int(C.SONIC_MAX_SAMPLE_RATE)
+	MIN_CHANNELS      = int(C.SONIC_MIN_CHANNELS)
+	MAX_CHANNELS      = int(C.SONIC_MAX_CHANNELS)
+)
+
 // Stream represents a SONIC audio stream
 type Stream struct {
 	stream C.sonicStream
