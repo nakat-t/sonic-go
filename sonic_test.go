@@ -126,7 +126,7 @@ func TestNewTransformer(t *testing.T) {
 				if tr == nil {
 					t.Fatal("transformer should not be nil")
 				}
-				expectedBufLen := streamBufferSize * 2
+				expectedBufLen := streamBufferSize
 				if len(tr.streamBuffer) != expectedBufLen {
 					t.Errorf("streamBuffer length = %d, want %d", len(tr.streamBuffer), expectedBufLen)
 				}
@@ -146,7 +146,7 @@ func TestNewTransformer(t *testing.T) {
 				if tr == nil {
 					t.Fatal("transformer should not be nil")
 				}
-				expectedBufLen := streamBufferSize * 4
+				expectedBufLen := streamBufferSize
 				if len(tr.streamBuffer) != expectedBufLen {
 					t.Errorf("streamBuffer length = %d, want %d", len(tr.streamBuffer), expectedBufLen)
 				}
