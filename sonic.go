@@ -142,7 +142,10 @@ func (t *Transformer) Flush() error {
 
 // writeInt16 writes int16 data to the transformer.
 func (t *Transformer) writeInt16(p []byte) (int, error) {
-	if len(p)%2 != 0 {
+	const sampleSize = 2                                         // 2 bytes per sample for int16
+	const streamBufferSampleSize = streamBufferSize / sampleSize // Number of samples in the stream buffer
+
+	if len(p)%sampleSize != 0 {
 		return 0, fmt.Errorf("%w: 'p' must be a multiple of the int16 type size", ErrInvalid)
 	}
 	samples := t.unsafeBytesAsInt16Slice(p)
@@ -153,7 +156,7 @@ func (t *Transformer) writeInt16(p []byte) (int, error) {
 	numWrittenBytes := 0
 
 	for {
-		size := min(len(samples), streamBufferSize)
+		size := min(len(samples), streamBufferSampleSize)
 		if size <= 0 {
 			break
 		}
@@ -161,7 +164,7 @@ func (t *Transformer) writeInt16(p []byte) (int, error) {
 		if okInt == 0 {
 			return numWrittenBytes, fmt.Errorf("%w: failed to write samples to stream", ErrSonicCLib)
 		}
-		numWrittenBytes += size * 2 // 2 bytes per sample for int16
+		numWrittenBytes += size * sampleSize
 
 		buf := t.unsafeBytesAsInt16Slice(t.streamBuffer)
 		for {
@@ -182,7 +185,10 @@ func (t *Transformer) writeInt16(p []byte) (int, error) {
 
 // writeFloat32 writes float32 data to the transformer.
 func (t *Transformer) writeFloat32(p []byte) (int, error) {
-	if len(p)%4 != 0 {
+	const sampleSize = 4                                         // 4 bytes per sample for float32
+	const streamBufferSampleSize = streamBufferSize / sampleSize // Number of samples in the stream buffer
+
+	if len(p)%sampleSize != 0 {
 		return 0, fmt.Errorf("%w: 'p' must be a multiple of the float32 type size", ErrInvalid)
 	}
 	samples := t.unsafeBytesAsFloat32Slice(p)
@@ -193,7 +199,7 @@ func (t *Transformer) writeFloat32(p []byte) (int, error) {
 	numWrittenBytes := 0
 
 	for {
-		size := min(len(samples), streamBufferSize)
+		size := min(len(samples), streamBufferSampleSize)
 		if size <= 0 {
 			break
 		}
@@ -201,7 +207,7 @@ func (t *Transformer) writeFloat32(p []byte) (int, error) {
 		if okInt == 0 {
 			return numWrittenBytes, fmt.Errorf("%w: failed to write samples to stream", ErrSonicCLib)
 		}
-		numWrittenBytes += size * 4 // 4 bytes per sample for float32
+		numWrittenBytes += size * sampleSize
 
 		buf := t.unsafeBytesAsFloat32Slice(t.streamBuffer)
 		for {
