@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"runtime"
 	"unsafe"
 
 	"github.com/nakat-t/sonic-go/internal/cgosonic"
@@ -113,6 +114,12 @@ func NewTransformer(w io.Writer, sampleRate int, format int, opts ...Option) (*T
 		stream.SetQuality(*t.quality)
 	}
 
+	runtime.SetFinalizer(t, func(t *Transformer) {
+		if t != nil {
+			t.Close()
+		}
+	})
+
 	return t, nil
 }
 
@@ -138,6 +145,18 @@ func (t *Transformer) Flush() error {
 	default:
 		return fmt.Errorf("%w: format is broken: %d", ErrInternal, t.format)
 	}
+}
+
+// Close closes the transformer and releases resources.
+func (t *Transformer) Close() error {
+	if t.stream != nil {
+		t.stream.DestroyStream()
+		t.stream = nil
+	}
+	if t.streamBuffer != nil {
+		t.streamBuffer = nil
+	}
+	return nil
 }
 
 // writeInt16 writes int16 data to the transformer.
