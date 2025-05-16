@@ -29,7 +29,6 @@ import "github.com/nakat-t/sonic-go"
 
 // Input audio data
 const sampleRate = 44100 // 44.1kHz
-const numChannels = 1 // mono 1ch
 var audioData []byte = readAudioDataSomeWay() // 16bit signed, linear PCM 
 
 // Output audio buffer
