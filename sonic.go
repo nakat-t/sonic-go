@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"runtime"
+	"slices"
 	"unsafe"
 
 	"github.com/nakat-t/sonic-go/internal/cgosonic"
@@ -19,18 +20,57 @@ var (
 	// ErrWrite is returned when writing to the writer fails.
 	ErrWrite = errors.New("failed to write to writer")
 
-	// ErrSonicCLib is returned when Sonic C library fails.
-	ErrSonicCLib = errors.New("sonic C library error")
+	// ErrSonicCreateFailed is returned when creating a Sonic stream fails.
+	ErrSonicCreateFailed = errors.New("failed to create C sonic stream")
+
+	// ErrSonicFailed is returned when Sonic fails to process the audio.
+	ErrSonicFailed = errors.New("failed to process audio")
 
 	// ErrInternal is returned when an internal error occurs.
 	ErrInternal = errors.New("internal error")
 )
 
+// AudioFormat represents the format of the audio data.
+// It can be either 16-bit signed integer (PCM) or 32-bit IEEE 754 float.
+type AudioFormat int
+
 // Constants for audio formats
 const (
-	FormatInt16   = 1 // PCM 16-bit signed integer
-	FormatFloat32 = 3 // PCM 32-bit float
+	AudioFormatPCM       AudioFormat = 1 // 16-bit signed integer
+	AudioFormatIEEEFloat AudioFormat = 3 // 32-bit IEEE 754 float
 )
+
+// String returns the string representation of the AudioFormat.
+func (f AudioFormat) String() string {
+	m := map[AudioFormat]string{
+		AudioFormatPCM:       "AudioFormatPCM",
+		AudioFormatIEEEFloat: "AudioFormatIEEEFloat",
+	}
+	if s, ok := m[f]; ok {
+		return s
+	}
+	return fmt.Sprintf("AudioFormat(%d)", f)
+}
+
+// Values returns the all possible values of AudioFormat.
+func (AudioFormat) Values() []AudioFormat {
+	return []AudioFormat{
+		AudioFormatPCM,
+		AudioFormatIEEEFloat,
+	}
+}
+
+// SampleSize returns the size of the audio sample in bytes.
+func (f AudioFormat) SampleSize() int {
+	m := map[AudioFormat]int{
+		AudioFormatPCM:       2, // 16-bit signed integer
+		AudioFormatIEEEFloat: 4, // 32-bit IEEE 754 float
+	}
+	if s, ok := m[f]; ok {
+		return s
+	}
+	return 0
+}
 
 const (
 	streamBufferSize = 4096 // Buffer size for cgosonic.Stream
@@ -41,7 +81,7 @@ type Transformer struct {
 	w           io.Writer
 	sampleRate  int
 	numChannels int
-	format      int
+	format      AudioFormat
 	volume      *float32
 	speed       *float32
 	pitch       *float32
@@ -53,15 +93,15 @@ type Transformer struct {
 }
 
 // NewTransformer creates a new Transformer instance.
-func NewTransformer(w io.Writer, sampleRate int, format int, opts ...Option) (*Transformer, error) {
+func NewTransformer(w io.Writer, sampleRate int, format AudioFormat, opts ...Option) (*Transformer, error) {
 	if w == nil {
 		return nil, fmt.Errorf("%w: writer is nil", ErrInvalid)
 	}
 	if sampleRate < cgosonic.MIN_SAMPLE_RATE || cgosonic.MAX_SAMPLE_RATE < sampleRate {
 		return nil, fmt.Errorf("%w: sampleRate %d is out of range [%d, %d]", ErrInvalid, sampleRate, cgosonic.MIN_SAMPLE_RATE, cgosonic.MAX_SAMPLE_RATE)
 	}
-	if format != FormatInt16 && format != FormatFloat32 {
-		return nil, fmt.Errorf("%w: format %d is not supported", ErrInvalid, format)
+	if !slices.Contains(format.Values(), format) {
+		return nil, fmt.Errorf("%w: format %v is not supported", ErrInvalid, format)
 	}
 
 	t := &Transformer{
@@ -85,18 +125,11 @@ func NewTransformer(w io.Writer, sampleRate int, format int, opts ...Option) (*T
 
 	stream, err := cgosonic.CreateStream(t.sampleRate, t.numChannels)
 	if err != nil {
-		return nil, fmt.Errorf("%w: failed to create sonic stream", ErrSonicCLib)
+		return nil, ErrSonicCreateFailed
 	}
 	t.stream = stream
 
-	switch t.format {
-	case FormatInt16:
-		t.streamBuffer = make([]byte, streamBufferSize*2) // 2 bytes per sample for int16
-	case FormatFloat32:
-		t.streamBuffer = make([]byte, streamBufferSize*4) // 4 bytes per sample for float32
-	default:
-		return nil, fmt.Errorf("%w: format is broken: %d", ErrInternal, t.format)
-	}
+	t.streamBuffer = make([]byte, streamBufferSize)
 
 	if t.volume != nil {
 		stream.SetVolume(*t.volume)
@@ -126,9 +159,9 @@ func NewTransformer(w io.Writer, sampleRate int, format int, opts ...Option) (*T
 // Write writes the data to the transformer.
 func (t *Transformer) Write(p []byte) (int, error) {
 	switch t.format {
-	case FormatInt16:
+	case AudioFormatPCM:
 		return t.writeInt16(p)
-	case FormatFloat32:
+	case AudioFormatIEEEFloat:
 		return t.writeFloat32(p)
 	default:
 		return 0, fmt.Errorf("%w: format is broken: %d", ErrInternal, t.format)
@@ -138,9 +171,9 @@ func (t *Transformer) Write(p []byte) (int, error) {
 // Flush flushes the transformer.
 func (t *Transformer) Flush() error {
 	switch t.format {
-	case FormatInt16:
+	case AudioFormatPCM:
 		return t.flushInt16()
-	case FormatFloat32:
+	case AudioFormatIEEEFloat:
 		return t.flushFloat32()
 	default:
 		return fmt.Errorf("%w: format is broken: %d", ErrInternal, t.format)
@@ -161,8 +194,8 @@ func (t *Transformer) Close() error {
 
 // writeInt16 writes int16 data to the transformer.
 func (t *Transformer) writeInt16(p []byte) (int, error) {
-	const sampleSize = 2                                         // 2 bytes per sample for int16
-	const streamBufferSampleSize = streamBufferSize / sampleSize // Number of samples in the stream buffer
+	sampleSize := t.format.SampleSize()
+	streamBufferSampleSize := streamBufferSize / sampleSize // Number of samples in the stream buffer
 
 	if len(p)%sampleSize != 0 {
 		return 0, fmt.Errorf("%w: 'p' must be a multiple of the int16 type size", ErrInvalid)
@@ -181,7 +214,7 @@ func (t *Transformer) writeInt16(p []byte) (int, error) {
 		}
 		okInt := t.stream.WriteShortToStream(samples[:size], size/t.numChannels)
 		if okInt == 0 {
-			return numWrittenBytes, fmt.Errorf("%w: failed to write samples to stream", ErrSonicCLib)
+			return numWrittenBytes, fmt.Errorf("%w: failed to write samples to stream", ErrSonicFailed)
 		}
 		numWrittenBytes += size * sampleSize
 
@@ -204,8 +237,8 @@ func (t *Transformer) writeInt16(p []byte) (int, error) {
 
 // writeFloat32 writes float32 data to the transformer.
 func (t *Transformer) writeFloat32(p []byte) (int, error) {
-	const sampleSize = 4                                         // 4 bytes per sample for float32
-	const streamBufferSampleSize = streamBufferSize / sampleSize // Number of samples in the stream buffer
+	sampleSize := t.format.SampleSize()
+	streamBufferSampleSize := streamBufferSize / sampleSize // Number of samples in the stream buffer
 
 	if len(p)%sampleSize != 0 {
 		return 0, fmt.Errorf("%w: 'p' must be a multiple of the float32 type size", ErrInvalid)
@@ -224,7 +257,7 @@ func (t *Transformer) writeFloat32(p []byte) (int, error) {
 		}
 		okInt := t.stream.WriteFloatToStream(samples[:size], size/t.numChannels)
 		if okInt == 0 {
-			return numWrittenBytes, fmt.Errorf("%w: failed to write samples to stream", ErrSonicCLib)
+			return numWrittenBytes, fmt.Errorf("%w: failed to write samples to stream", ErrSonicFailed)
 		}
 		numWrittenBytes += size * sampleSize
 
@@ -248,13 +281,13 @@ func (t *Transformer) writeFloat32(p []byte) (int, error) {
 func (t *Transformer) flushInt16() error {
 	ret := t.stream.FlushStream()
 	if ret == 0 {
-		return fmt.Errorf("%w: failed to flush stream", ErrSonicCLib)
+		return fmt.Errorf("%w: failed to flush stream", ErrSonicFailed)
 	}
 	for t.stream.SamplesAvailable() > 0 {
 		samples := make([]int16, t.stream.SamplesAvailable())
 		n := t.stream.ReadShortFromStream(samples, len(samples))
 		if n <= 0 {
-			return fmt.Errorf("%w: failed to read samples from stream", ErrSonicCLib)
+			return fmt.Errorf("%w: failed to read samples from stream", ErrSonicFailed)
 		}
 		if err := binary.Write(t.w, binary.LittleEndian, samples[:n]); err != nil {
 			return fmt.Errorf("%w: failed to write samples: %w", ErrWrite, err)
@@ -266,13 +299,13 @@ func (t *Transformer) flushInt16() error {
 func (t *Transformer) flushFloat32() error {
 	ret := t.stream.FlushStream()
 	if ret == 0 {
-		return fmt.Errorf("%w: failed to flush stream", ErrSonicCLib)
+		return fmt.Errorf("%w: failed to flush stream", ErrSonicFailed)
 	}
 	for t.stream.SamplesAvailable() > 0 {
 		samples := make([]float32, t.stream.SamplesAvailable())
 		n := t.stream.ReadFloatFromStream(samples, len(samples))
 		if n <= 0 {
-			return fmt.Errorf("%w: failed to read samples from stream", ErrSonicCLib)
+			return fmt.Errorf("%w: failed to read samples from stream", ErrSonicFailed)
 		}
 		if err := binary.Write(t.w, binary.LittleEndian, samples[:n]); err != nil {
 			return fmt.Errorf("%w: failed to write samples: %w", ErrWrite, err)

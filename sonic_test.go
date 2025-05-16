@@ -62,8 +62,8 @@ func (fw *failingWriter) Write(p []byte) (n int, err error) {
 func TestNewTransformer(t *testing.T) {
 	validWriter := new(bytes.Buffer)
 	validSampleRate := 44100
-	validFormatInt16 := FormatInt16
-	validFormatFloat32 := FormatFloat32
+	validFormatInt16 := AudioFormatPCM
+	validFormatFloat32 := AudioFormatIEEEFloat
 
 	errTestOption := errors.New("test option error")
 	failingTestOption := func(tr *Transformer) error {
@@ -110,7 +110,7 @@ func TestNewTransformer(t *testing.T) {
 		name             string
 		writer           io.Writer
 		sampleRate       int
-		format           int
+		format           AudioFormat
 		opts             []Option
 		wantErr          error
 		checkTransformer func(*testing.T, *Transformer)
@@ -126,7 +126,7 @@ func TestNewTransformer(t *testing.T) {
 				if tr == nil {
 					t.Fatal("transformer should not be nil")
 				}
-				expectedBufLen := streamBufferSize * 2
+				expectedBufLen := streamBufferSize
 				if len(tr.streamBuffer) != expectedBufLen {
 					t.Errorf("streamBuffer length = %d, want %d", len(tr.streamBuffer), expectedBufLen)
 				}
@@ -146,7 +146,7 @@ func TestNewTransformer(t *testing.T) {
 				if tr == nil {
 					t.Fatal("transformer should not be nil")
 				}
-				expectedBufLen := streamBufferSize * 4
+				expectedBufLen := streamBufferSize
 				if len(tr.streamBuffer) != expectedBufLen {
 					t.Errorf("streamBuffer length = %d, want %d", len(tr.streamBuffer), expectedBufLen)
 				}
@@ -278,7 +278,7 @@ func TestNewTransformer(t *testing.T) {
 func TestTransformer_Write(t *testing.T) {
 	sampleRate := 44100
 
-	newTestTransformer := func(tb testing.TB, format int, writer io.Writer) *Transformer {
+	newTestTransformer := func(tb testing.TB, format AudioFormat, writer io.Writer) *Transformer {
 		tb.Helper()
 		if writer == nil {
 			writer = new(bytes.Buffer)
@@ -317,7 +317,7 @@ func TestTransformer_Write(t *testing.T) {
 
 	testCases := []struct {
 		name        string
-		format      int
+		format      AudioFormat
 		inputData   []byte
 		writer      io.Writer
 		wantErr     error
@@ -326,7 +326,7 @@ func TestTransformer_Write(t *testing.T) {
 	}{
 		{
 			name:      "int16 valid write",
-			format:    FormatInt16,
+			format:    AudioFormatPCM,
 			inputData: int16Bytes,
 			writer:    new(bytes.Buffer),
 			wantErr:   nil,
@@ -340,7 +340,7 @@ func TestTransformer_Write(t *testing.T) {
 		},
 		{
 			name:      "float32 valid write",
-			format:    FormatFloat32,
+			format:    AudioFormatIEEEFloat,
 			inputData: float32Bytes,
 			writer:    new(bytes.Buffer),
 			wantErr:   nil,
@@ -348,7 +348,7 @@ func TestTransformer_Write(t *testing.T) {
 		},
 		{
 			name:      "int16 empty data",
-			format:    FormatInt16,
+			format:    AudioFormatPCM,
 			inputData: []byte{},
 			writer:    new(bytes.Buffer),
 			wantErr:   nil,
@@ -361,21 +361,21 @@ func TestTransformer_Write(t *testing.T) {
 		},
 		{
 			name:      "int16 invalid data length (odd)",
-			format:    FormatInt16,
+			format:    AudioFormatPCM,
 			inputData: []byte{1, 2, 3},
 			wantErr:   ErrInvalid,
 			expectedN: 0,
 		},
 		{
 			name:      "float32 invalid data length (not multiple of 4)",
-			format:    FormatFloat32,
+			format:    AudioFormatIEEEFloat,
 			inputData: []byte{1, 2, 3, 4, 5},
 			wantErr:   ErrInvalid,
 			expectedN: 0,
 		},
 		{
 			name:      "write error from underlying writer (int16)",
-			format:    FormatInt16,
+			format:    AudioFormatPCM,
 			inputData: largeInt16Bytes, // Use larger data to ensure write to io.Writer is attempted
 			writer:    &failingWriter{err: errors.New("writer failed"), bytesUntilFail: 0},
 			wantErr:   ErrWrite,
@@ -417,7 +417,7 @@ func TestTransformer_Write(t *testing.T) {
 
 // TestTransformer_Flush tests the Flush method of Transformer.
 func TestTransformer_Flush(t *testing.T) {
-	newTestTransformerAndWriteData := func(tb testing.TB, format int, writer io.Writer, data []byte) *Transformer {
+	newTestTransformerAndWriteData := func(tb testing.TB, format AudioFormat, writer io.Writer, data []byte) *Transformer {
 		tb.Helper()
 		tr := newTestTransformer(tb, format, writer) // newTestTransformer handles cleanup
 		if len(data) > 0 {
@@ -437,7 +437,7 @@ func TestTransformer_Flush(t *testing.T) {
 
 	testCases := []struct {
 		name        string
-		format      int
+		format      AudioFormat
 		initialData []byte
 		writer      io.Writer
 		wantErr     error
@@ -445,7 +445,7 @@ func TestTransformer_Flush(t *testing.T) {
 	}{
 		{
 			name:        "int16 flush with data",
-			format:      FormatInt16,
+			format:      AudioFormatPCM,
 			initialData: int16Bytes,
 			writer:      new(bytes.Buffer),
 			wantErr:     nil,
@@ -457,7 +457,7 @@ func TestTransformer_Flush(t *testing.T) {
 		},
 		{
 			name:        "int16 flush empty (no prior write)",
-			format:      FormatInt16,
+			format:      AudioFormatPCM,
 			initialData: []byte{},
 			writer:      new(bytes.Buffer),
 			wantErr:     nil,
@@ -506,7 +506,7 @@ func TestTransformer_Flush(t *testing.T) {
 func TestTransformer_unsafeBytesAsSlice(t *testing.T) {
 	dummyWriter := new(bytes.Buffer)
 	// Minimal valid transformer, stream will be cleaned up by t.Cleanup in newTestTransformer
-	tr := newTestTransformer(t, FormatInt16, dummyWriter)
+	tr := newTestTransformer(t, AudioFormatPCM, dummyWriter)
 
 	t.Run("unsafeBytesAsInt16Slice", func(t *testing.T) {
 		tests := []struct {
@@ -585,7 +585,7 @@ func TestTransformer_unsafeBytesAsSlice(t *testing.T) {
 }
 
 // newTestTransformer is a helper from TestTransformer_Write, made accessible for TestTransformer_unsafeBytesAsSlice
-func newTestTransformer(tb testing.TB, format int, writer io.Writer) *Transformer {
+func newTestTransformer(tb testing.TB, format AudioFormat, writer io.Writer) *Transformer {
 	tb.Helper()
 	sampleRate := 44100 // A common valid sample rate
 	if writer == nil {

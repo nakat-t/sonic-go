@@ -1,7 +1,6 @@
 # Project-specific ignore files
 test/testdata/reference/
 test/testdata/processed/
-basic
 src.wav
 out.wav
 
