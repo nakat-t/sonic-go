@@ -1,17 +1,22 @@
-package cgosonic
+package sonic
 
 import (
+	"bytes"
+	"encoding/binary"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
 	"testing"
+
+	"github.com/nakat-t/sonic-go/internal/cgosonic"
 )
 
 const (
 	// Path to the original audio file
-	originalWavPath = "../../test/testdata/original/common_voice_en_1dcef00e46910f33.wav"
+	originalWavPath = "./test/testdata/original/common_voice_en_1dcef00e46910f33.wav"
 	// Directory containing reference audio files
-	referenceWavDir = "../../test/testdata/reference/"
+	referenceWavDir = "./test/testdata/reference/"
 )
 
 // TestReferenceVolume tests that volume modification matches the reference implementation
@@ -79,69 +84,62 @@ func testProcessedAudioMatchesReference(t *testing.T, volume, speed, pitch float
 		t.Fatalf("Failed to get current working directory: %v", err)
 	}
 
-	wfIn, sampleRate, numChannels, err := OpenInputWaveFile(filepath.Join(cwd, originalWavPath))
+	wfIn, sampleRate, numChannels, err := cgosonic.OpenInputWaveFile(filepath.Join(cwd, originalWavPath))
 	if err != nil {
 		t.Fatalf("Failed to open original audio file: %v", err)
 	}
-	defer wfIn.CloseWaveFile()
+	wfIn.CloseWaveFile()
 
-	// Process audio using cgosonic
-	// Use Stream API for processing
-	stream, err := CreateStream(sampleRate, numChannels)
+	fileIn, err := os.Open(filepath.Join(cwd, originalWavPath))
 	if err != nil {
-		t.Fatalf("Failed to create stream: %v", err)
+		t.Fatalf("Failed to open original audio file: %v", err)
 	}
-	defer stream.DestroyStream()
-
-	// Set parameters
-	stream.SetSpeed(speed)
-	stream.SetPitch(pitch)
-	stream.SetVolume(volume)
-	stream.SetQuality(quality)
-
-	numReferenceSamples, err := readNumSamplesFromWavFile(filepath.Join(cwd, referenceWavDir, referenceFileName))
+	in := bytes.NewBuffer(nil)
+	_, err = io.Copy(in, fileIn)
 	if err != nil {
-		t.Logf("If you don't have any reference audio yet, run the following command: ./scripts/gen-testdata.sh")
-		t.Fatalf("Failed to read reference sample count: %v", err)
+		t.Fatalf("Failed to read original audio file: %v", err)
+	}
+	fileIn.Close()
+	in.Next(44) // Skip the WAV header
+
+	opts := []Option{
+		WithSpeed(speed),
+		WithPitch(pitch),
+		WithVolume(volume),
+	}
+	if quality != 0 {
+		opts = append(opts, WithQuality())
+	}
+	if numChannels != 1 {
+		opts = append(opts, WithChannels(numChannels))
 	}
 
-	// Allocate buffer for processed samples
-	numProcessedSamplesWithPadding := numReferenceSamples + BUFFER_SIZE
-	processedSamples := make([]int16, numProcessedSamplesWithPadding)
-	numProcessedSamples := 0
+	out := bytes.NewBuffer(nil)
 
-	inBuffer := make([]int16, BUFFER_SIZE)
-	for {
-		// Read samples from the input file
-		numSamplesRead := wfIn.ReadFromWaveFile(inBuffer, BUFFER_SIZE/numChannels)
-		if numSamplesRead == 0 {
-			stream.FlushStream()
-		} else {
-			stream.WriteShortToStream(inBuffer, numSamplesRead)
-		}
-
-		for {
-			numSamplesWritten := stream.ReadShortFromStream(processedSamples[numProcessedSamples:], BUFFER_SIZE/numChannels)
-			if numSamplesWritten <= 0 {
-				break
-			}
-			numProcessedSamples += numSamplesWritten
-		}
-
-		if numSamplesRead <= 0 {
-			break
-		}
+	// Create a Sonic instance
+	transformer, err := NewTransformer(out, sampleRate, FormatInt16, opts...)
+	if err != nil {
+		t.Fatalf("Failed to create Sonic instance: %v", err)
 	}
 
-	//  Trim buffer to actual size read
-	processedSamples = processedSamples[:numProcessedSamples]
+	_, err = io.Copy(transformer, in)
+	if err != nil {
+		t.Fatalf("Failed to copy data to transformer: %v", err)
+	}
 
-	// For Debug: Output processed wave file to 'test/testdata/processed/cgosonic'
+	transformer.Flush()
+
+	processedSamples := make([]int16, out.Len()/2)
+	if err := binary.Read(out, binary.LittleEndian, processedSamples); err != nil {
+		t.Fatalf("Failed to read processed samples: %v", err)
+	}
+
+	// For Debug: Output processed wave file to 'test/testdata/processed/sonic/'
 	if os.Getenv("CGOSONIC_TEST_DEBUG") != "" {
-		os.MkdirAll(filepath.Join(cwd, "../../test/testdata/processed/cgosonic"), 0755)
+		os.MkdirAll(filepath.Join(cwd, "./test/testdata/processed/sonic/"), 0755)
 
-		processedWavPath := filepath.Join(cwd, "../../test/testdata/processed/cgosonic", referenceFileName)
-		wfOut, err := OpenOutputWaveFile(processedWavPath, sampleRate, numChannels)
+		processedWavPath := filepath.Join(cwd, "./test/testdata/processed/sonic/", referenceFileName)
+		wfOut, err := cgosonic.OpenOutputWaveFile(processedWavPath, sampleRate, numChannels)
 		if err != nil {
 			t.Fatalf("Failed to open output wave file: %v", err)
 		}
@@ -153,9 +151,15 @@ func testProcessedAudioMatchesReference(t *testing.T, volume, speed, pitch float
 		}
 	}
 
+	numReferenceSamples, err := readNumSamplesFromWavFile(filepath.Join(cwd, referenceWavDir, referenceFileName))
+	if err != nil {
+		t.Logf("If you don't have any reference audio yet, run the following command: ./scripts/gen-testdata.sh")
+		t.Fatalf("Failed to read reference sample count: %v", err)
+	}
+
 	// Load reference audio file
 	referenceFilePath := filepath.Join(referenceWavDir, referenceFileName)
-	refWf, refSampleRate, refNumChannels, err := OpenInputWaveFile(referenceFilePath)
+	refWf, refSampleRate, refNumChannels, err := cgosonic.OpenInputWaveFile(referenceFilePath)
 	if err != nil {
 		t.Fatalf("Failed to open reference audio file: %v", err)
 	}
