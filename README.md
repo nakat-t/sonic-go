@@ -18,7 +18,7 @@ go get github.com/nakat-t/sonic-go
 
 ## Usage
 
-The core of the sonic package is the `sonic.Transformer` class. This object wraps an `io.Writer` object and creates another `Writer` object that provides functions to modify the volume, pitch, speed, etc. of audio data.
+The core of the sonic package is the `sonic.Transformer` class. This object wraps an `io.Writer` object and creates another `io.Writer` object that provides functions to modify the volume, pitch, speed, etc. of audio data.
 
 Here is an example of 2.5x speed up and 1.5x volume increase for linear PCM audio:
 
@@ -36,7 +36,7 @@ var audioData []byte = readAudioDataSomeWay() // 16bit signed, linear PCM
 var outAudioData bytes.Buffer
 
 // Create a Sonic transformer
-trf, err := sonic.NewTransformer(outAudioData, sampleRate, sonic.FormatInt16,
+trf, err := sonic.NewTransformer(outAudioData, sampleRate, sonic.AudioFormatPCM,
 	sonic.WithSpeed(2.5),
 	sonic.WithVolume(1.5),
 )

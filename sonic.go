@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"runtime"
+	"slices"
 	"unsafe"
 
 	"github.com/nakat-t/sonic-go/internal/cgosonic"
@@ -26,11 +27,47 @@ var (
 	ErrInternal = errors.New("internal error")
 )
 
+// AudioFormat represents the format of the audio data.
+// It can be either 16-bit signed integer (PCM) or 32-bit IEEE 754 float.
+type AudioFormat int
+
 // Constants for audio formats
 const (
-	FormatInt16   = 1 // PCM 16-bit signed integer
-	FormatFloat32 = 3 // PCM 32-bit float
+	AudioFormatPCM       AudioFormat = 1 // 16-bit signed integer
+	AudioFormatIEEEFloat AudioFormat = 3 // 32-bit IEEE 754 float
 )
+
+// String returns the string representation of the AudioFormat.
+func (f AudioFormat) String() string {
+	m := map[AudioFormat]string{
+		AudioFormatPCM:       "AudioFormatPCM",
+		AudioFormatIEEEFloat: "AudioFormatIEEEFloat",
+	}
+	if s, ok := m[f]; ok {
+		return s
+	}
+	return fmt.Sprintf("AudioFormat(%d)", f)
+}
+
+// Values returns the all possible values of AudioFormat.
+func (AudioFormat) Values() []AudioFormat {
+	return []AudioFormat{
+		AudioFormatPCM,
+		AudioFormatIEEEFloat,
+	}
+}
+
+// SampleSize returns the size of the audio sample in bytes.
+func (f AudioFormat) SampleSize() int {
+	m := map[AudioFormat]int{
+		AudioFormatPCM:       2, // 16-bit signed integer
+		AudioFormatIEEEFloat: 4, // 32-bit IEEE 754 float
+	}
+	if s, ok := m[f]; ok {
+		return s
+	}
+	return 0
+}
 
 const (
 	streamBufferSize = 4096 // Buffer size for cgosonic.Stream
@@ -41,7 +78,7 @@ type Transformer struct {
 	w           io.Writer
 	sampleRate  int
 	numChannels int
-	format      int
+	format      AudioFormat
 	volume      *float32
 	speed       *float32
 	pitch       *float32
@@ -53,15 +90,15 @@ type Transformer struct {
 }
 
 // NewTransformer creates a new Transformer instance.
-func NewTransformer(w io.Writer, sampleRate int, format int, opts ...Option) (*Transformer, error) {
+func NewTransformer(w io.Writer, sampleRate int, format AudioFormat, opts ...Option) (*Transformer, error) {
 	if w == nil {
 		return nil, fmt.Errorf("%w: writer is nil", ErrInvalid)
 	}
 	if sampleRate < cgosonic.MIN_SAMPLE_RATE || cgosonic.MAX_SAMPLE_RATE < sampleRate {
 		return nil, fmt.Errorf("%w: sampleRate %d is out of range [%d, %d]", ErrInvalid, sampleRate, cgosonic.MIN_SAMPLE_RATE, cgosonic.MAX_SAMPLE_RATE)
 	}
-	if format != FormatInt16 && format != FormatFloat32 {
-		return nil, fmt.Errorf("%w: format %d is not supported", ErrInvalid, format)
+	if !slices.Contains(format.Values(), format) {
+		return nil, fmt.Errorf("%w: format %v is not supported", ErrInvalid, format)
 	}
 
 	t := &Transformer{
@@ -90,9 +127,9 @@ func NewTransformer(w io.Writer, sampleRate int, format int, opts ...Option) (*T
 	t.stream = stream
 
 	switch t.format {
-	case FormatInt16:
+	case AudioFormatPCM:
 		t.streamBuffer = make([]byte, streamBufferSize*2) // 2 bytes per sample for int16
-	case FormatFloat32:
+	case AudioFormatIEEEFloat:
 		t.streamBuffer = make([]byte, streamBufferSize*4) // 4 bytes per sample for float32
 	default:
 		return nil, fmt.Errorf("%w: format is broken: %d", ErrInternal, t.format)
@@ -126,9 +163,9 @@ func NewTransformer(w io.Writer, sampleRate int, format int, opts ...Option) (*T
 // Write writes the data to the transformer.
 func (t *Transformer) Write(p []byte) (int, error) {
 	switch t.format {
-	case FormatInt16:
+	case AudioFormatPCM:
 		return t.writeInt16(p)
-	case FormatFloat32:
+	case AudioFormatIEEEFloat:
 		return t.writeFloat32(p)
 	default:
 		return 0, fmt.Errorf("%w: format is broken: %d", ErrInternal, t.format)
@@ -138,9 +175,9 @@ func (t *Transformer) Write(p []byte) (int, error) {
 // Flush flushes the transformer.
 func (t *Transformer) Flush() error {
 	switch t.format {
-	case FormatInt16:
+	case AudioFormatPCM:
 		return t.flushInt16()
-	case FormatFloat32:
+	case AudioFormatIEEEFloat:
 		return t.flushFloat32()
 	default:
 		return fmt.Errorf("%w: format is broken: %d", ErrInternal, t.format)
@@ -161,8 +198,8 @@ func (t *Transformer) Close() error {
 
 // writeInt16 writes int16 data to the transformer.
 func (t *Transformer) writeInt16(p []byte) (int, error) {
-	const sampleSize = 2                                         // 2 bytes per sample for int16
-	const streamBufferSampleSize = streamBufferSize / sampleSize // Number of samples in the stream buffer
+	sampleSize := t.format.SampleSize()
+	streamBufferSampleSize := streamBufferSize / sampleSize // Number of samples in the stream buffer
 
 	if len(p)%sampleSize != 0 {
 		return 0, fmt.Errorf("%w: 'p' must be a multiple of the int16 type size", ErrInvalid)
@@ -204,8 +241,8 @@ func (t *Transformer) writeInt16(p []byte) (int, error) {
 
 // writeFloat32 writes float32 data to the transformer.
 func (t *Transformer) writeFloat32(p []byte) (int, error) {
-	const sampleSize = 4                                         // 4 bytes per sample for float32
-	const streamBufferSampleSize = streamBufferSize / sampleSize // Number of samples in the stream buffer
+	sampleSize := t.format.SampleSize()
+	streamBufferSampleSize := streamBufferSize / sampleSize // Number of samples in the stream buffer
 
 	if len(p)%sampleSize != 0 {
 		return 0, fmt.Errorf("%w: 'p' must be a multiple of the float32 type size", ErrInvalid)

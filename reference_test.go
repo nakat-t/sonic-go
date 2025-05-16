@@ -117,7 +117,7 @@ func testProcessedAudioMatchesReference(t *testing.T, volume, speed, pitch float
 	out := bytes.NewBuffer(nil)
 
 	// Create a Sonic instance
-	transformer, err := NewTransformer(out, sampleRate, FormatInt16, opts...)
+	transformer, err := NewTransformer(out, sampleRate, AudioFormatPCM, opts...)
 	if err != nil {
 		t.Fatalf("Failed to create Sonic instance: %v", err)
 	}
